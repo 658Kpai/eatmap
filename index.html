@@ -1,11 +1,713 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>班级蹭饭地图</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <!-- Tailwind配置 -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#7e57c2',
+            secondary: '#f5f5f7',
+            neutral: {
+              50: '#f5f5f7',
+              100: '#e9e9eb',
+              200: '#d2d2d7',
+              300: '#b7b7bb',
+              400: '#86868b',
+              500: '#6e6e73',
+              600: '#58585b',
+              700: '#3a3a3c',
+              800: '#2c2c2e',
+              900: '#1c1c1e',
+            }
+          },
+          fontFamily: {
+            inter: ['SF Pro Text', 'system-ui', 'sans-serif'],
+          },
+        },
+      }
+    }
+  </script>
+
+  <style type="text/tailwindcss">
+    @layer utilities {
+      .content-auto {
+        content-visibility: auto;
+      }
+      .province {
+        transition: all 0.3s ease;
+        cursor: pointer;
+      }
+      .province:hover {
+        fill: rgba(79, 70, 229, 0.2);
+        stroke: #4F46E5;
+        stroke-width: 1.5px;
+      }
+      .card-hover {
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+      }
+      .card-hover:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 25px -5px rgba(126, 87, 194, 0.2);
+      }
+    }
+  </style>
 </head>
-<body>
-    <p>Hello World</p>
+<body class="font-inter bg-neutral-100 text-neutral-800 min-h-screen flex flex-col text-xl">
+  <!-- 顶部导航 -->
+  <header class="bg-white shadow-sm sticky top-0 z-50">
+    <div class="container mx-auto px-4 py-4 flex justify-between items-center">
+      <div class="flex items-center space-x-3">
+        <i class="fa fa-map-marker text-primary text-2xl"></i>
+        <h1 class="text-2xl font-bold">班级蹭饭地图</h1>
+      </div>
+      <div class="flex items-center space-x-4">
+        <button id="mobileUploadBtn" class="md:hidden text-neutral-700 hover:text-primary">
+          <i class="fa fa-upload text-xl"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主要内容区 -->
+  <main class="flex-grow container mx-auto px-4 py-6">
+    <!-- 上传提示卡片 -->
+    <div id="uploadPrompt" class="bg-white rounded-xl shadow-sm p-6 mb-6 text-center">
+      <div class="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+        <i class="fa fa-file-excel-o text-primary text-2xl"></i>
+      </div>
+      <h2 class="text-2xl font-semibold mb-2">上传同学数据</h2>
+      <p class="text-neutral-600 mb-6 max-w-md mx-auto">
+        请上传包含同学信息的Excel文件（eatmap.xlsx），系统将自动解析并在地图上显示同学分布
+      </p>
+      <label for="mobileFileUpload" class="inline-flex items-center bg-primary text-white px-4 py-2 rounded-lg cursor-pointer transition-colors hover:bg-primary/90">
+        <i class="fa fa-upload mr-2"></i>选择Excel文件
+        <input type="file" id="mobileFileUpload" accept=".xlsx,.xls" class="hidden">
+      </label>
+    </div>
+
+    <!-- 数据统计卡片 -->
+    <div id="statsCards" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 hidden">
+      <div class="bg-white rounded-xl shadow-sm p-5 card-hover">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-neutral-600 font-medium">总人数</h3>
+          <i class="fa fa-users text-primary text-xl"></i>
+        </div>
+        <p id="totalStudents" class="text-3xl font-bold">0</p>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm p-5 card-hover">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-neutral-600 font-medium">覆盖省份</h3>
+          <i class="fa fa-map text-secondary text-xl"></i>
+        </div>
+        <p id="totalProvinces" class="text-3xl font-bold">0</p>
+      </div>
+      <div class="bg-white rounded-xl shadow-sm p-5 card-hover">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-neutral-600 font-medium">平均分布</h3>
+          <i class="fa fa-bar-chart text-green-500 text-xl"></i>
+        </div>
+        <p id="avgDistribution" class="text-3xl font-bold">0</p>
+      </div>
+    </div>
+
+    <!-- 地图容器 -->
+    <div id="mapContainer" class="bg-white rounded-xl shadow-sm p-4 md:p-6 hidden">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-2xl font-semibold">同学分布地图</h2>
+        <div class="flex space-x-2">
+          <button id="zoomIn" class="p-2 rounded-full hover:bg-neutral-200 transition-colors">
+            <i class="fa fa-search-plus text-neutral-700"></i>
+          </button>
+          <button id="zoomOut" class="p-2 rounded-full hover:bg-neutral-200 transition-colors">
+            <i class="fa fa-search-minus text-neutral-700"></i>
+          </button>
+          <button id="resetMap" class="p-2 rounded-full hover:bg-neutral-200 transition-colors">
+            <i class="fa fa-refresh text-neutral-700"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- 地图将在这里渲染 -->
+      <div class="w-full h-[60vh] relative border border-neutral-200 rounded-lg overflow-hidden">
+        <svg id="chinaMap" class="w-full h-full"></svg>
+
+        <!-- 加载指示器 -->
+        <div id="mapLoader" class="absolute inset-0 bg-white/80 flex items-center justify-center z-10">
+          <div class="text-center">
+            <div class="inline-block animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary mb-4"></div>
+            <p class="text-neutral-700">加载地图中...</p>
+          </div>
+        </div>
+
+        <!-- 悬停提示框 -->
+        <div id="tooltip" class="absolute bg-white rounded-lg shadow-lg p-3 z-20 hidden pointer-events-none max-w-[200px] border border-neutral-200">
+          <h3 class="font-semibold text-neutral-800 mb-1" id="tooltipTitle"></h3>
+          <ul id="tooltipContent" class="text-base text-neutral-600 space-y-1"></ul>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 详情模态框 -->
+  <div id="detailModal" class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto">
+      <div class="p-5 border-b flex justify-between items-center sticky top-0 bg-white z-10">
+        <h2 class="text-xl font-bold" id="modalTitle"></h2>
+        <button id="closeModal" class="text-neutral-400 hover:text-neutral-700">
+          <i class="fa fa-times text-xl"></i>
+        </button>
+      </div>
+      <div class="p-5">
+        <p class="text-neutral-600 mb-5">该地区共有 <span id="modalStudentCount" class="font-semibold text-primary">0</span> 位同学</p>
+
+        <div id="studentGrid" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <!-- 同学信息卡片将动态添加到这里 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 页脚 -->
+  <footer class="bg-neutral-800 text-white py-6 mt-8">
+    <div class="container mx-auto px-4 text-center text-neutral-300 text-sm">
+      <p>凡心所向，素履其往，六五八班，一苇以航</p>
+    </div>
+  </footer>
+
+  <script>
+    // 全局变量
+    let svg, projection, path, studentsData = {};
+    let mapData = null;
+    let currentScale = 1;
+    let currentTranslate = [0, 0];
+
+    // DOM元素
+    const fileUpload = document.getElementById('fileUpload');
+    const mobileFileUpload = document.getElementById('mobileFileUpload');
+    const mobileUploadBtn = document.getElementById('mobileUploadBtn');
+    const uploadPrompt = document.getElementById('uploadPrompt');
+    const statsCards = document.getElementById('statsCards');
+    const mapContainer = document.getElementById('mapContainer');
+    const mapLoader = document.getElementById('mapLoader');
+    const tooltip = document.getElementById('tooltip');
+    const tooltipTitle = document.getElementById('tooltipTitle');
+    const tooltipContent = document.getElementById('tooltipContent');
+    const detailModal = document.getElementById('detailModal');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalStudentCount = document.getElementById('modalStudentCount');
+    const studentGrid = document.getElementById('studentGrid');
+    const closeModal = document.getElementById('closeModal');
+    const totalStudentsEl = document.getElementById('totalStudents');
+    const totalProvincesEl = document.getElementById('totalProvinces');
+    const avgDistributionEl = document.getElementById('avgDistribution');
+    const zoomInBtn = document.getElementById('zoomIn');
+    const zoomOutBtn = document.getElementById('zoomOut');
+    const resetMapBtn = document.getElementById('resetMap');
+
+    // 初始化事件监听
+    function initEventListeners() {
+      // 模态框关闭事件
+      closeModal.addEventListener('click', () => {
+        detailModal.classList.remove('flex');
+        detailModal.classList.add('hidden');
+      });
+
+      detailModal.addEventListener('click', (e) => {
+        if (e.target === detailModal) {
+          detailModal.classList.remove('flex');
+          detailModal.classList.add('hidden');
+        }
+      });
+
+      // 地图控制事件
+      zoomInBtn.addEventListener('click', () => {
+        currentScale = Math.min(currentScale * 1.2, 3);
+        updateMapTransform();
+      });
+
+      zoomOutBtn.addEventListener('click', () => {
+        currentScale = Math.max(currentScale / 1.2, 0.5);
+        updateMapTransform();
+      });
+
+      resetMapBtn.addEventListener('click', () => {
+        currentScale = 1;
+        currentTranslate = [0, 0];
+        updateMapTransform();
+      });
+
+      // 窗口大小变化时重绘地图
+      window.addEventListener('resize', () => {
+        if (mapData) {
+          renderMap();
+        }
+      });
+    }
+
+    // 处理Excel文件上传
+    function handleFileUpload(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      // 验证文件类型
+      if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
+        alert('请上传Excel文件(.xlsx或.xls格式)');
+        return;
+      }
+
+      // 读取Excel文件
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+          // 处理Excel数据
+          processExcelData(jsonData);
+
+          // 显示地图和统计信息
+          uploadPrompt.classList.add('hidden');
+          statsCards.classList.remove('hidden');
+          mapContainer.classList.remove('hidden');
+
+          // 如果地图数据尚未加载，则加载地图
+          if (!mapData) {
+            loadMapData();
+          } else {
+            // 否则重新渲染地图
+            renderMap();
+          }
+        } catch (error) {
+          console.error('解析Excel文件失败:', error);
+          alert('解析Excel文件失败，请检查文件格式是否正确');
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    // 处理Excel数据
+    function processExcelData(jsonData) {
+      // 假设Excel包含"姓名"、"省份"、"城市"、"学校"、"专业"等列
+      const processedData = {};
+
+      jsonData.forEach(student => {
+        const province = student.省份 || student.province || '未知省份';
+        if (!processedData[province]) {
+          processedData[province] = [];
+        }
+
+        // 标准化学生数据
+        processedData[province].push({
+          name: student.姓名 || student.name || '未知姓名',
+          city: student.城市 || student.city || '',
+          school: student.学校 || student.school || '',
+          phone: student.电话 || student.phone || '',
+        });
+      });
+
+      studentsData = processedData;
+
+      // 更新统计数据
+      updateStats();
+    }
+
+    // 更新统计数据
+    function updateStats() {
+      const totalStudents = Object.values(studentsData)
+        .reduce((sum, students) => sum + students.length, 0);
+      const totalProvinces = Object.keys(studentsData).length;
+      const avgDistribution = totalProvinces > 0
+        ? (totalStudents / totalProvinces).toFixed(1)
+        : '0';
+
+      totalStudentsEl.textContent = totalStudents;
+      totalProvincesEl.textContent = totalProvinces;
+      avgDistributionEl.textContent = avgDistribution;
+    }
+
+    // 加载地图数据
+    async function loadMapData() {
+      try {
+        // 优先使用本地GeoJSON文件，如果失败则尝试在线API
+        try {
+          mapData = await d3.json('chinamap.geojson');
+        } catch (localError) {
+          console.warn('加载本地地图数据失败，尝试在线API:', localError);
+          mapData = await d3.json('https://geo.datav.aliyun.com/areas_v3/bound/geojson?code=100000_full');
+        }
+        renderMap();
+      } catch (error) {
+        console.error('加载地图数据失败:', error);
+        mapLoader.innerHTML = `
+          <div class="text-center">
+            <i class="fa fa-exclamation-triangle text-red-500 text-2xl mb-4"></i>
+            <p class="text-neutral-700">加载地图失败，请刷新页面重试</p>
+          </div>
+        `;
+      }
+    }
+
+    // 渲染地图
+    function renderMap() {
+      // 清除现有地图
+      d3.select('#chinaMap').selectAll('*').remove();
+
+      // 获取容器尺寸
+      const container = document.getElementById('chinaMap').parentElement;
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+
+      // 创建SVG
+      svg = d3.select('#chinaMap')
+        .attr('width', width)
+        .attr('height', height);
+
+      // 创建投影
+      projection = d3.geoMercator()
+        .center([105, 35]) // 中国中心坐标
+        .scale(width / 2.5) // 缩放比例 (进一步放大)
+        .translate([width / 2, height / 2]); // 平移到容器中心
+
+      // 创建路径生成器
+      path = d3.geoPath().projection(projection);
+
+      // 添加地图路径
+      const provinces = svg.selectAll('path')
+        .data(mapData.features)
+        .enter()
+        .append('path')
+        .attr('d', path)
+        .attr('class', 'province')
+        .attr('fill', d => {
+          const provinceName = d.properties.name;
+          return studentsData[provinceName] && studentsData[provinceName].length > 0
+            ? '#EDE9FE' // 有同学的省份
+            : '#F3F4F6'; // 没有同学的省份
+        })
+        .attr('stroke', '#D1D5DB')
+        .attr('stroke-width', 1)
+        .attr('data-name', d => d.properties.name);
+
+      // 添加省份名称标签
+      svg.selectAll('text')
+        .data(mapData.features)
+        .enter()
+        .append('text')
+        .attr('transform', d => {
+          const centroid = path.centroid(d);
+          return `translate(${centroid[0]}, ${centroid[1]})`;
+        })
+        .attr('text-anchor', 'middle')
+        .attr('dominant-baseline', 'middle')
+        .attr('font-size', '12px')
+        .attr('fill', '#6B7280')
+        .text(d => {
+          const name = d.properties.name;
+          // 简化长省份名称
+          if (name.length > 3) {
+            return name.substring(0, 2);
+          }
+          return name;
+        })
+        .attr('pointer-events', 'none');
+
+      // 添加交互事件
+      provinces
+        .on('mouseover', handleMouseOver)
+        .on('mousemove', handleMouseMove)
+        .on('mouseout', handleMouseOut)
+        .on('click', handleProvinceClick);
+
+      // 添加地图缩放和平移
+      svg.call(d3.zoom()
+        .scaleExtent([0.5, 3])
+        .on('zoom', (event) => {
+          currentScale = event.transform.k;
+          currentTranslate = [event.transform.x, event.transform.y];
+          svg.selectAll('path').attr('transform', event.transform);
+          svg.selectAll('text').attr('transform', d => {
+            const centroid = path.centroid(d);
+            const [x, y] = event.transform.apply([centroid[0], centroid[1]]);
+            return `translate(${x}, ${y})`;
+          });
+        }));
+
+      // 隐藏加载指示器
+      mapLoader.classList.add('hidden');
+    }
+
+    // 更新地图变换
+    function updateMapTransform() {
+      svg.transition()
+        .duration(300)
+        .call(d3.zoom().transform, d3.zoomIdentity
+          .translate(currentTranslate[0], currentTranslate[1])
+          .scale(currentScale)
+        );
+    }
+
+    // 处理鼠标悬停事件
+    function handleMouseOver(event, d) {
+      const provinceName = d.properties.name;
+      const students = studentsData[provinceName] || [];
+
+      tooltipTitle.textContent = provinceName;
+      tooltipContent.innerHTML = '';
+
+      if (students.length > 0) {
+        students.slice(0, 3).forEach(student => {
+          const li = document.createElement('li');
+          li.className = 'flex items-center';
+          li.innerHTML = `
+            <i class="fa fa-user text-primary mr-2"></i>
+            <span>${student.name}${student.school ? `(${student.school})` : ''}</span>
+          `;
+          tooltipContent.appendChild(li);
+        });
+
+        if (students.length > 3) {
+          const li = document.createElement('li');
+          li.className = 'text-neutral-400 text-center mt-1';
+          li.textContent = `+${students.length - 3}位同学`;
+          tooltipContent.appendChild(li);
+        }
+      } else {
+        tooltipContent.innerHTML = '<li class="text-neutral-400"><i class="fa fa-meh-o mr-2"></i>暂无同学</li>';
+      }
+
+      tooltip.classList.remove('hidden');
+      handleMouseMove(event);
+    }
+
+    // 处理鼠标移动事件
+    function handleMouseMove(event) {
+      const tooltipWidth = tooltip.offsetWidth;
+      const tooltipHeight = tooltip.offsetHeight;
+      const container = tooltip.parentElement;
+      const containerRect = container.getBoundingClientRect();
+
+      // 计算tooltip位置
+      let left = event.clientX - containerRect.left + 10;
+      let top = event.clientY - containerRect.top + 10;
+
+      // 确保tooltip不会超出容器
+      if (left + tooltipWidth > containerRect.width) {
+        left = event.clientX - containerRect.left - tooltipWidth - 10;
+      }
+
+      if (top + tooltipHeight > containerRect.height) {
+        top = event.clientY - containerRect.top - tooltipHeight - 10;
+      }
+
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${top}px`;
+    }
+
+    // 处理鼠标移出事件
+    function handleMouseOut() {
+      tooltip.classList.add('hidden');
+    }
+
+    // 处理省份点击事件
+    function handleProvinceClick(event, d) {
+      const provinceName = d.properties.name;
+      const students = studentsData[provinceName] || [];
+
+      modalTitle.textContent = provinceName;
+      modalStudentCount.textContent = students.length;
+      studentGrid.innerHTML = '';
+
+      if (students.length > 0) {
+        students.forEach(student => {
+          const card = document.createElement('div');
+          card.className = 'bg-white rounded-lg p-4 border border-neutral-200 transition-all duration-300 hover:shadow-md hover:border-primary';
+          card.innerHTML = `
+            <h3 class="font-semibold text-neutral-800 text-lg">${student.name}</h3>
+            ${student.school ? `<p class="text-base text-neutral-600 mb-2">${student.school} </p>` : ''}
+            ${student.city ? `<p class="text-base text-neutral-500 mb-3"><i class="fa fa-map-marker text-primary mr-1"></i>${student.city}</p>` : ''}
+            <div class="grid grid-cols-2 gap-2 text-base">
+              ${student.phone ? `<div class="flex items-center text-neutral-600"><i class="fa fa-phone text-primary mr-1 w-4"></i>${student.phone}</div>` : ''}
+            </div>
+          `;
+          studentGrid.appendChild(card);
+        });
+      } else {
+        studentGrid.innerHTML = `
+          <div class="col-span-2 py-12 text-center text-neutral-400">
+            <i class="fa fa-frown-o text-4xl mb-2"></i>
+            <p>该省份暂无同学数据</p>
+          </div>
+        `;
+      }
+
+      // 显示模态框
+      detailModal.classList.remove('hidden');
+      detailModal.classList.add('flex');
+    }
+
+   
+    // 添加一些CSS动画和过渡效果
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .stat-card {
+        transition: all 0.3s ease;
+      }
+      .stat-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      }
+      .modal-content {
+        animation: fadeIn 0.3s ease;
+        background-color: white;
+        border-radius: 12px;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        border: 1px solid #e9e9eb;
+      }
+      path.province {
+        transition: fill 0.3s ease, stroke 0.3s ease;
+      }
+      path.province:hover {
+        stroke-width: 2px;
+        stroke: #7e57c2;
+        fill-opacity: 0.8;
+      }
+    `;
+    document.head.appendChild(style);
+
+    // 美化页面标题
+    document.title = '蹭饭🍚🍨🍝';
+
+    // 改进页面头部样式
+    const header = document.createElement('header');
+    header.className = 'bg-gradient-to-r from-purple-400 to-blue-500 py-6 px-4';
+    header.innerHTML = `
+      <div class='container mx-auto'>
+          <h1 class='text-2xl md:text-3xl font-bold text-white'>康和五八蹭饭地图</h1>
+          <p class='text-white/80'>康帅:“我一见你就笑，你那迷人的风采太美妙”</p>
+        </div>
+    `;
+    document.body.insertBefore(header, document.body.firstChild);
+
+    // 添加页脚
+    const footer = document.createElement('footer');
+    footer.className = 'bg-gradient-to-r from-purple-400 to-blue-500 text-white py-4 px-4 mt-8';
+    footer.innerHTML = `
+      <div class='container mx-auto text-center text-base'>
+        <p>658蹭饭地图 &copy; ${new Date().getFullYear()} | 永远的K派</p>
+      </div>
+    `;
+    document.body.appendChild(footer);
+
+    // 美化统计卡片
+    const statsContainer = document.querySelector('.stats-container');
+    if (statsContainer) {
+      statsContainer.className = 'grid grid-cols-1 md:grid-cols-3 gap-4 mt-6';
+      const statCards = statsContainer.querySelectorAll('.stat-card');
+      statCards.forEach(card => {
+        card.className = 'bg-white rounded-lg p-4 border border-neutral-200 stat-card transition-all duration-300 hover:shadow-md';
+      });
+    }
+
+    // 美化地图容器
+    const mapContainer美化 = document.getElementById('map-container');
+    if (mapContainer美化) {
+      mapContainer美化.className = 'bg-neutral-50 rounded-lg p-4 mt-6 border border-neutral-200';
+    }
+
+    // 手动录入同学数据
+    function manuallyEnterData() {
+      // 在这里手动录入同学数据
+      // 格式: { '姓名': '张三', '省份': '北京市', '城市': '北京市', '学校': '北京大学', '专业': '计算机科学与技术', '电话': '13800138000', '微信': 'zhangsan123' }
+      return [
+        { '姓名': '乔振洋', '省份': '湖南省', '城市': '长沙市', '学校': '国防科技大学大学', '电话': '15149721081'},
+        { '姓名': '段琦天', '省份': '四川省', '城市': '成都市', '学校': '电子科技大学','电话': '16647776356'},
+        { '姓名': '杨子瑄', '省份': '黑龙江省', '城市': '哈尔滨市', '学校': '哈尔滨工业大学','电话': '18847709909'},
+        { '姓名': '秦家琛', '省份': '辽宁省', '城市': '大连市', '学校': '大连医科大学', '电话': '13722191213'},
+        { '姓名': '陈元科', '省份': '重庆市', '城市': '重庆市', '学校': '重庆大学', '电话': '15598702336'},
+        { '姓名': '樊岩松', '省份': '北京市', '城市': '北京市', '学校': '北京科技大学', '电话': '13204845651'},
+        { '姓名': '赵晨瑜', '省份': '江苏省', '城市': '徐州市', '学校': '中国矿业大学', '电话': '17747197308'},
+        { '姓名': '钱政先', '省份': '湖南省', '城市': '长沙市', '学校': '中南大学', '电话': '18347727447'},
+        { '姓名': '王云翔', '省份': '北京市', '城市': '北京市', '学校': '北京交通大学', '电话': '18647271072'},
+        { '姓名': '白抒逸', '省份': '四川省', '城市': '成都市', '学校': '四川大学', '电话': '15248432958'},
+        { '姓名': '侯卫轩', '省份': '重庆市', '城市': '重庆市', '学校': '重庆大学', '电话': '15248432958'},
+        { '姓名': '刘沛霖', '省份': '江苏省', '城市': '徐州市', '学校': '中国矿业大学',  '电话': '15048739996'},
+        { '姓名': '白雨慧', '省份': '湖南省', '城市': '长沙市', '学校': '中南大学', '电话': '15391260430'},
+        { '姓名': '王琛妍', '省份': '河北省', '城市': '保定市', '学校': '华北电力大学', '电话': '13314777683'},
+        { '姓名': '马熙隆', '省份': '河北省', '城市': '保定市', '学校': '华北电力大学', '电话': '13847721191'},
+        { '姓名': '赵禹熙', '省份': '四川省', '城市': '成都市', '学校': '四川大学', '电话': '13847712575'},
+        { '姓名': '李昊禹', '省份': '江苏省', '城市': '徐州市', '学校': '中国矿业大学', '电话': '18604772974'},
+        { '姓名': '崔浩然', '省份': '北京市', '城市': '北京市', '学校': '中央财经大学', '电话': '15704907423'},
+        { '姓名': '王怡宁', '省份': '四川省', '城市': '成都市', '学校': '中南大学', '电话': '15384778230'},
+        { '姓名': '高楚博', '省份': '四川省', '城市': '成都市', '学校': '中南大学', '电话': '18147711888'},
+        { '姓名': '米玥兴', '省份': '陕西省', '城市': '西安市', '学校': '西安交通大学', '电话': '15047353552'},
+        { '姓名': '倪舒源', '省份': '北京市', '城市': '北京市', '学校': '北京科技大学', '电话': '18347769619'},
+        { '姓名': '訾卓然', '省份': '辽宁省', '城市': '大连市', '学校': '大连理工大学', '电话': '18700283373'},
+        { '姓名': '任倢', '省份': '北京市', '城市': '北京市', '学校': '北京科技大学', '电话': '15661864696'},
+        { '姓名': '陈雨涵', '省份': '湖北省', '城市': '武汉市', '学校': '华中师范大学', '电话': '15044924646'},
+        { '姓名': '田育林', '省份': '北京市', '城市': '北京市', '学校': '北京交通大学', '电话': '18004770556'},
+        { '姓名': '武子墨', '省份': '上海市', '城市': '上海市', '学校': '华东理工大学', '电话': '13847783430'},
+        { '姓名': '王昭淇', '省份': '陕西省', '城市': '西安市', '学校': '空军工程大学', '电话': '13310347790'},
+        { '姓名': '张子涵', '省份': '上海市', '城市': '上海市', '学校': '东华大学', '电话': '15548556691'},
+        { '姓名': '贾梦蝶', '省份': '上海市', '城市': '上海市', '学校': '华东师范大学', '电话': '18147754342'},
+        { '姓名': '吴沂轩', '省份': '湖北省', '城市': '武汉市', '学校': '武汉理工大学', '电话': '13029578588'},
+        { '姓名': '朱怡璇', '省份': '山东省', '城市': '青岛市', '学校': '康复大学', '电话': '18204916366'},
+        { '姓名': '高一博', '省份': '北京市', '城市': '北京市', '学校': '中国政法大学', '电话': '19997771198'},
+        { '姓名': '陈辰', '省份': '北京市', '城市': '北京市', '学校': '北京邮电大学', '电话': '15147727090'},
+        { '姓名': '王明辉', '省份': '北京市', '城市': '北京市', '学校': '中国人民公安大学', '电话': '19847317619'},
+        { '姓名': '胡凯诵', '省份': '吉林省', '城市': '长春市', '学校': '吉林大学', '电话': '15391277387'},
+        { '姓名': '赵俞凯', '省份': '甘肃省', '城市': '兰州市', '学校': '兰州大学', '电话': '13020445652'},
+        { '姓名': '李国璋', '省份': '北京市', '城市': '北京市', '学校': '北京大学医学部', '电话': '15149687831'},
+        { '姓名': '杨宇铭', '省份': '山东省', '城市': '威海市', '学校': '北京交通大学(威海)', '电话': '13948174888'},
+        { '姓名': '石智中', '省份': '陕西省', '城市': '西安市', '学校': '西安电子科技大学', '电话': '18847789965'},
+        { '姓名': '李艾锡', '省份': '河南省', '城市': '郑州市', '学校': '郑州大学', '电话': '18647736086'},
+        { '姓名': '张靖周', '省份': '广东省', '城市': '珠海市', '学校': '北师香港浸会大学', '电话': '13722081888'},
+        { '姓名': '刘政恺', '省份': '湖北省', '城市': '武汉市', '学校': '华中农业大学', '电话': '15714872203'},
+        { '姓名': '赵翊博', '省份': '山西省', '城市': '太原市', '学校': '太原理工大学', '电话': '15149420947'},
+        { '姓名': '严卓冉', '省份': '河北省', '城市': '秦皇岛市', '学校': '东北大学(秦皇岛)', '电话': '15647757219'},
+        { '姓名': '张智庭', '省份': '河北省', '城市': '保定市', '学校': '华北电力大学', '电话': '18847725450'},
+        { '姓名': '白慧', '省份': '四川省', '城市': '成都市', '学校': '西南财经大学', '电话': '18847767514'},
+        { '姓名': '温舒馨', '省份': '河北省', '城市': '石家庄市', '学校': '河北医科大学', '电话': '19284776895'},
+        { '姓名': '王梓硕', '省份': '内蒙古自治区', '城市': '呼和浩特市', '学校': '内蒙古警察学院', '电话': '15149721641'},
+        { '姓名': '高源璐', '省份': '内蒙古自治区', '城市': '呼和浩特市', '学校': '内蒙古大学', '电话': '15354980212'},
+        { '姓名': '陈墨涵', '省份': '辽宁省', '城市': '沈阳市', '学校': '东北大学', '电话': '15849747477'},
+        { '姓名': '安羿华', '省份': '陕西省', '城市': '西安市', '学校': '西北大学', '电话': '19997771401'},
+             ];
+    }
+
+    // 初始化应用
+    function init() {
+      initEventListeners();
+      // 使用手动录入数据
+      const studentData = manuallyEnterData();
+      // 处理数据
+      processExcelData(studentData);
+      // 显示地图和统计信息
+      uploadPrompt.classList.add('hidden');
+      statsCards.classList.remove('hidden');
+      mapContainer.classList.remove('hidden');
+      // 加载地图数据
+      loadMapData();
+    }
+
+    // 页面加载完成后初始化
+    window.addEventListener('load', init);
+  </script>
 </body>
 </html>
